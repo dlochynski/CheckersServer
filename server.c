@@ -11,6 +11,8 @@
 
 #define QSIZE 5
 #define CLIENTS 1000
+#define MAX_MSG_LEN 4096
+#define PORT 8888
 
 
 struct User
@@ -24,9 +26,12 @@ struct Game
 {
     int dsc1;
     int dsc2;
-    char lastMove[4096];
+    char lastMove[MAX_MSG_LEN];
+    int lastPlayerDsc;
+    int sent;
 };
 struct User users[CLIENTS];
+struct Game games[CLIENTS/2];
 
 int checkIfPlayerIsLoggedIn (int dsc, struct User us[])
 {
@@ -74,7 +79,6 @@ int getUserIndex(int dsc, struct User us[])
     int i;
     for(i = 0; i < CLIENTS; i++ )
     {
-       if(i==0) printf("\n%d %d\n", us[i].dsc, dsc);
         if(us[i].dsc == dsc) return i;
     }
     return -1;
@@ -83,7 +87,6 @@ int getUserIndex(int dsc, struct User us[])
 int canIPlayWithSomebody(int dsc, struct User us[])
 {
     int playerIndex = getUserIndex(dsc, us);
-    printf("playerIndex %d", playerIndex);
     if(!us[playerIndex].playing)
     {
         int i;
@@ -95,10 +98,53 @@ int canIPlayWithSomebody(int dsc, struct User us[])
     }
     return 0;
 }
+int findFreeGameIdx(struct Game gms[])
+{
+    int i;
+    for(i = 0; i < CLIENTS/2; i++)
+    {
+        if(gms[i].dsc1 == 0) return i;
+    }
+    return -1;
+}
+struct User findOpponent(int dsc, struct User us[])
+{
+    int playerIndex = getUserIndex(dsc, us);
+    if( playerIndex > 0 && !us[playerIndex].playing)
+    {
+        int i;
+        for(i = 0; i < CLIENTS; i++)
+        {
+            if(us[i].dsc && us[playerIndex].dsc != us[i].dsc && !us[i].playing) return us[i];
+        }
+    }
+}
+
+void createGame (int dsc1, int dsc2, struct User us[], struct Game games[])
+{
+    int player1Index = getUserIndex(dsc1, us);
+    int player2Index = getUserIndex(dsc2, us);
+    int gameId = findFreeGameIdx(games);
+    if(gameId >= 0)
+    {
+        // printf("TWORZE GRĘ gracze: %d i %d", users[player1Index].dsc, users[player2Index]);
+        games[gameId].dsc1 = dsc1;
+        games[gameId].dsc2 = dsc2;
+        games[gameId].lastPlayerDsc = dsc2;
+        games[gameId].sent = 0;
+        strcpy(games[gameId].lastMove,"@#$");
+        us[player1Index].gameId = gameId;
+        us[player2Index].gameId = gameId;
+        us[player2Index].playing = 1;
+        us[player1Index].playing = 1;
+
+    }
+
+}
 
 
 char *protocol = "tcp";
-ushort service_port = 8888;
+ushort service_port = PORT;
 
 char* response = "Hello, this is diagnostic service\n";
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -114,26 +160,76 @@ struct arguments
 void* client_loop(void *arg)
 {
     int rcvd;
-    char buffer[1024];
+    char buffer[MAX_MSG_LEN];
     arguments a = *((arguments*) arg);
-    printf("%d", a.socket);
     if(!checkIfPlayerIsLoggedIn(a.socket,users))
     {
-    printf("yes");
         logIn(createUser(a.socket),users);
     }
-    printf("count %d can i play %d",getUsersCount(users), canIPlayWithSomebody(a.socket, users));
+    char c;
+    int idx = getUserIndex(a.socket, users);
+    struct User this = users[idx];
+    if(canIPlayWithSomebody(a.socket, users))
+    {
+        struct User opp =  findOpponent(a.socket, users);
+        createGame(a.socket, opp.dsc,users, games);
+        // printf("opponent dsc %d ", opp.dsc);
+        strcpy(buffer, "white");
+        c='w';
+        send(a.socket, buffer,  strlen( buffer ), 0);
+
+    }
+    else   //nie ma z kim grać
+    {
+        printf("zaczynam oczekiwanie na gracza");
+        while(!this.playing)
+        {
+            this = users[idx];
+        }
+        strcpy(buffer, "black");
+        c='b';
+        send(a.socket, buffer,  strlen( buffer ), 0);
+    }
+    bzero(&buffer, sizeof buffer);
+    // printf("count %d can i play %d",getUsersCount(users), canIPlayWithSomebody(a.socket, users));
     while(buffer[0]!='e' && buffer[1]!='n' && buffer[2]!='d')
     {
-        rcvd = recv(a.socket, buffer, 1024, 0);
-        send(a.socket, buffer, rcvd, 0);
+        int gameId = users[idx].gameId;
+        int opp;
+        if(games[gameId].lastPlayerDsc != users[idx].dsc)
+        {
+            if(games[gameId].dsc1 == users[idx].dsc) opp = games[gameId].dsc2;
+            else opp = games[gameId].dsc1;
+            if(games[gameId].sent != users[idx].dsc )
+            {
+                while((rcvd = recv(a.socket, buffer,  MAX_MSG_LEN, 0) > 0 ))
+                {
+
+                    printf("jestem watkiem %c otrzymalem wiadomosc %s %d\n", c,buffer, strlen(buffer));
+                    send(opp, buffer, strlen(buffer), 0);
+                    bzero(&buffer, sizeof buffer);
+                    games[gameId].sent = users[idx].dsc;
+                    games[gameId].lastPlayerDsc = users[idx].dsc;
+
+                }
+            }
+        }
+
+
+        else
+        {
+            pthread_mutex_lock(&mutex);
+            while(games[gameId].lastPlayerDsc == users[idx].dsc);
+            pthread_mutex_unlock(&mutex);
+        }
+        //send(a.socket, buffer,  strlen( buffer ), 0);
     }
     close(a.socket);
 
     pthread_mutex_lock(&mutex);
     client_threads[a.index] = 0;
     pthread_mutex_unlock(&mutex);
-    printf("client disconnected\n");
+    printf("%c client disconnected\n", c);
     pthread_exit(NULL);
 }
 
@@ -193,7 +289,7 @@ int main(int argc,char **argv)
 
         if(i == CLIENTS)
         {
-            printf("kaszana\n");
+            printf("we are done\n");
             close(rcv_sck);
         }
         else
