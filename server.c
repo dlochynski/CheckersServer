@@ -26,6 +26,7 @@ struct Game
 {
     int dsc1;
     int dsc2;
+    int inProgress;
     char lastMove[MAX_MSG_LEN];
     int lastPlayerDsc;
     int sent;
@@ -48,6 +49,21 @@ struct User createUser(int dsc)
     us.dsc = dsc;
     us.playing = 0;
     return us;
+}
+struct User destroyUser(int dsc, struct User us[])
+{
+    int i;
+    for(i = 0; i < CLIENTS; i++ )
+    {
+
+        if(us[i].dsc ==dsc)
+        {
+            us[i].dsc = 0;
+            us[i].gameId = 0;
+            us[i].playing = 0;
+            break;
+        }
+    }
 }
 void logIn(struct User player, struct User us[])
 {
@@ -132,6 +148,7 @@ void createGame (int dsc1, int dsc2, struct User us[], struct Game games[])
         games[gameId].dsc2 = dsc2;
         games[gameId].lastPlayerDsc = dsc2;
         games[gameId].sent = 0;
+        games[gameId].inProgress = 1;
         strcpy(games[gameId].lastMove,"@#$");
         us[player1Index].gameId = gameId;
         us[player2Index].gameId = gameId;
@@ -159,6 +176,7 @@ struct arguments
 
 void* client_loop(void *arg)
 {
+    printf("rozpoczynam swe zycie");
     int rcvd;
     char buffer[MAX_MSG_LEN];
     arguments a = *((arguments*) arg);
@@ -192,9 +210,11 @@ void* client_loop(void *arg)
     }
     bzero(&buffer, sizeof buffer);
     // printf("count %d can i play %d",getUsersCount(users), canIPlayWithSomebody(a.socket, users));
-    while(buffer[0]!='e' && buffer[1]!='n' && buffer[2]!='d')
+    int end = 0;
+    while((strcmp(buffer,"end") != 0))
     {
         int gameId = users[idx].gameId;
+        if(!games[gameId].inProgress)break;
         int opp;
         if(games[gameId].lastPlayerDsc != users[idx].dsc)
         {
@@ -202,28 +222,34 @@ void* client_loop(void *arg)
             else opp = games[gameId].dsc1;
             if(games[gameId].sent != users[idx].dsc )
             {
+           // printf("ciagle tu jestem %c",c);
+           bzero(&buffer, sizeof buffer);
+          // printf("jestem watkiem %c bufor%s \n", c,buffer);
                 while((rcvd = recv(a.socket, buffer,  MAX_MSG_LEN, 0) > 0 ))
                 {
-
                     printf("jestem watkiem %c otrzymalem wiadomosc %s %d\n", c,buffer, strlen(buffer));
+                    if(strcmp(buffer,"end") == 0) {
+                        games[gameId].inProgress = 0;
+                        send(a.socket, buffer, strlen(buffer), 0);
+                    }
                     send(opp, buffer, strlen(buffer), 0);
-                    bzero(&buffer, sizeof buffer);
+                    printf("jestem watkiem %c wyslalem wiadomosc %s %d\n", c,buffer, strlen(buffer));
                     games[gameId].sent = users[idx].dsc;
                     games[gameId].lastPlayerDsc = users[idx].dsc;
 
                 }
             }
         }
-
-
         else
         {
-            pthread_mutex_lock(&mutex);
             while(games[gameId].lastPlayerDsc == users[idx].dsc);
-            pthread_mutex_unlock(&mutex);
         }
-        //send(a.socket, buffer,  strlen( buffer ), 0);
+
     }
+
+     printf("\n koncze. watek %c\n", c);
+     destroyUser(a.socket, users);
+    bzero(&buffer, sizeof buffer);
     close(a.socket);
 
     pthread_mutex_lock(&mutex);
