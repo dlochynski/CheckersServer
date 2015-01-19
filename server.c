@@ -211,8 +211,9 @@ void* client_loop(void *arg)
     bzero(&buffer, sizeof buffer);
     // printf("count %d can i play %d",getUsersCount(users), canIPlayWithSomebody(a.socket, users));
     int end = 0;
-    while((strcmp(buffer,"end") != 0))
+    while((strcmp(buffer,"end") != 0) && (strcmp(buffer,"user_disconnected")!= 0))
     {
+        //printf('')
         int gameId = users[idx].gameId;
         if(!games[gameId].inProgress)break;
         int opp;
@@ -228,15 +229,19 @@ void* client_loop(void *arg)
                 while((rcvd = recv(a.socket, buffer,  MAX_MSG_LEN, 0) > 0 ))
                 {
                     printf("jestem watkiem %c otrzymalem wiadomosc %s %d\n", c,buffer, strlen(buffer));
-                    if(strcmp(buffer,"end") == 0) {
+                    if(strcmp(buffer,"end") == 0 ||  strcmp(buffer,"user_disconnected")== 0) {
                         games[gameId].inProgress = 0;
-                        send(a.socket, buffer, strlen(buffer), 0);
+                        //send(a.socket, buffer, strlen(buffer), 0);
+                        //games[gameId].lastPlayerDsc = users[idx].dsc;
+                        printf("jestem watkiem %c otrzymalem wiadomosc konca", c);
                     }
                     send(opp, buffer, strlen(buffer), 0);
                     printf("jestem watkiem %c wyslalem wiadomosc %s %d\n", c,buffer, strlen(buffer));
+
                     games[gameId].sent = users[idx].dsc;
                     games[gameId].lastPlayerDsc = users[idx].dsc;
-
+                    bzero(&buffer, sizeof buffer);
+                    if(!games[gameId].inProgress)break;
                 }
             }
         }
