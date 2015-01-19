@@ -50,7 +50,7 @@ struct User createUser(int dsc)
     us.playing = 0;
     return us;
 }
-struct User destroyUser(int dsc, struct User us[])
+void destroyUser(int dsc, struct User us[])
 {
     int i;
     for(i = 0; i < CLIENTS; i++ )
@@ -74,7 +74,6 @@ void logIn(struct User player, struct User us[])
         if(!us[i].dsc)
         {
             us[i] = player;
-            printf("player dsc %d %d", player.dsc, us[i].dsc);
             break;
         }
     }
@@ -143,7 +142,6 @@ void createGame (int dsc1, int dsc2, struct User us[], struct Game games[])
     int gameId = findFreeGameIdx(games);
     if(gameId >= 0)
     {
-        // printf("TWORZE GRĘ gracze: %d i %d", users[player1Index].dsc, users[player2Index]);
         games[gameId].dsc1 = dsc1;
         games[gameId].dsc2 = dsc2;
         games[gameId].lastPlayerDsc = dsc2;
@@ -176,7 +174,6 @@ struct arguments
 
 void* client_loop(void *arg)
 {
-    printf("rozpoczynam swe zycie");
     int rcvd;
     char buffer[MAX_MSG_LEN];
     arguments a = *((arguments*) arg);
@@ -191,15 +188,14 @@ void* client_loop(void *arg)
     {
         struct User opp =  findOpponent(a.socket, users);
         createGame(a.socket, opp.dsc,users, games);
-        // printf("opponent dsc %d ", opp.dsc);
         strcpy(buffer, "white");
         c='w';
         send(a.socket, buffer,  strlen( buffer ), 0);
 
     }
-    else   //nie ma z kim grać
+    else
     {
-        printf("zaczynam oczekiwanie na gracza");
+        printf("\njestem watkiem  o dsc rownym: %d oczekuje na gracza\n", a.socket);
         while(!this.playing)
         {
             this = users[idx];
@@ -209,11 +205,8 @@ void* client_loop(void *arg)
         send(a.socket, buffer,  strlen( buffer ), 0);
     }
     bzero(&buffer, sizeof buffer);
-    // printf("count %d can i play %d",getUsersCount(users), canIPlayWithSomebody(a.socket, users));
-    int end = 0;
     while((strcmp(buffer,"end") != 0) && (strcmp(buffer,"user_disconnected")!= 0))
     {
-        //printf('')
         int gameId = users[idx].gameId;
         if(!games[gameId].inProgress)break;
         int opp;
@@ -223,20 +216,17 @@ void* client_loop(void *arg)
             else opp = games[gameId].dsc1;
             if(games[gameId].sent != users[idx].dsc )
             {
-           // printf("ciagle tu jestem %c",c);
-           bzero(&buffer, sizeof buffer);
-          // printf("jestem watkiem %c bufor%s \n", c,buffer);
+                bzero(&buffer, sizeof buffer);
                 while((rcvd = recv(a.socket, buffer,  MAX_MSG_LEN, 0) > 0 ))
                 {
-                    printf("jestem watkiem %c otrzymalem wiadomosc %s %d\n", c,buffer, strlen(buffer));
-                    if(strcmp(buffer,"end") == 0 ||  strcmp(buffer,"user_disconnected")== 0) {
+                    printf("\njestem watkiem o kolorze: %c o dsc rownym: %d otrzymalem wiadomosc\n", c, a.socket);
+                    if(strcmp(buffer,"end") == 0 ||  strcmp(buffer,"user_disconnected")== 0)
+                    {
                         games[gameId].inProgress = 0;
-                        //send(a.socket, buffer, strlen(buffer), 0);
-                        //games[gameId].lastPlayerDsc = users[idx].dsc;
-                        printf("jestem watkiem %c otrzymalem wiadomosc konca", c);
+                        printf("\njestem watkiem o kolorze: %c o dsc rownym: %d otrzymalem wiadomosc konca\n", c, a.socket);
                     }
                     send(opp, buffer, strlen(buffer), 0);
-                    printf("jestem watkiem %c wyslalem wiadomosc %s %d\n", c,buffer, strlen(buffer));
+                    printf("\njestem watkiem o kolorze: %c o dsc rownym: %d wyslalem wiadomosc\n", c, a.socket);
 
                     games[gameId].sent = users[idx].dsc;
                     games[gameId].lastPlayerDsc = users[idx].dsc;
@@ -251,16 +241,14 @@ void* client_loop(void *arg)
         }
 
     }
-
-     printf("\n koncze. watek %c\n", c);
-     destroyUser(a.socket, users);
+    destroyUser(a.socket, users);
     bzero(&buffer, sizeof buffer);
     close(a.socket);
 
     pthread_mutex_lock(&mutex);
     client_threads[a.index] = 0;
     pthread_mutex_unlock(&mutex);
-    printf("%c client disconnected\n", c);
+    printf("\njestem watkiem o kolorze: %c o dsc rownym: %d client disconnected \n", c, a.socket);
     pthread_exit(NULL);
 }
 
