@@ -27,7 +27,6 @@ struct Game
     int dsc1;
     int dsc2;
     int inProgress;
-    char lastMove[MAX_MSG_LEN];
     int lastPlayerDsc;
     int sent;
 };
@@ -50,6 +49,15 @@ struct User createUser(int dsc)
     us.playing = 0;
     return us;
 }
+void destroyGame(int gameId, struct Game gms[])
+{
+
+    gms[gameId].dsc1 = 0;
+    gms[gameId].dsc1 = 0;
+    gms[gameId].inProgress = 0;
+    gms[gameId].lastPlayerDsc = 0;
+    gms[gameId].sent = 0;
+}
 void destroyUser(int dsc, struct User us[])
 {
     int i;
@@ -70,7 +78,6 @@ void logIn(struct User player, struct User us[])
     int i;
     for(i = 0; i < CLIENTS; i++ )
     {
-
         if(!us[i].dsc)
         {
             us[i] = player;
@@ -113,6 +120,7 @@ int canIPlayWithSomebody(int dsc, struct User us[])
     }
     return 0;
 }
+
 int findFreeGameIdx(struct Game gms[])
 {
     int i;
@@ -122,6 +130,7 @@ int findFreeGameIdx(struct Game gms[])
     }
     return -1;
 }
+
 struct User findOpponent(int dsc, struct User us[])
 {
     int playerIndex = getUserIndex(dsc, us);
@@ -130,9 +139,13 @@ struct User findOpponent(int dsc, struct User us[])
         int i;
         for(i = 0; i < CLIENTS; i++)
         {
-            if(us[i].dsc && us[playerIndex].dsc != us[i].dsc && !us[i].playing) return us[i];
+            if(us[i].dsc && us[playerIndex].dsc != us[i].dsc && !us[i].playing) {
+                printf("foundOpp %d", us[i].dsc);
+                return us[i];
+            }
         }
     }
+    return us[0];
 }
 
 void createGame (int dsc1, int dsc2, struct User us[], struct Game games[])
@@ -147,7 +160,6 @@ void createGame (int dsc1, int dsc2, struct User us[], struct Game games[])
         games[gameId].lastPlayerDsc = dsc2;
         games[gameId].sent = 0;
         games[gameId].inProgress = 1;
-        strcpy(games[gameId].lastMove,"@#$");
         us[player1Index].gameId = gameId;
         us[player2Index].gameId = gameId;
         us[player2Index].playing = 1;
@@ -161,7 +173,6 @@ void createGame (int dsc1, int dsc2, struct User us[], struct Game games[])
 char *protocol = "tcp";
 ushort service_port = PORT;
 
-char* response = "Hello, this is diagnostic service\n";
 pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 int clientsCount = 0;
 pthread_t client_threads[CLIENTS];
@@ -174,20 +185,23 @@ struct arguments
 
 void* client_loop(void *arg)
 {
-    int rcvd;
-    char buffer[MAX_MSG_LEN];
+    char buffer[MAX_MSG_LEN], c;
     arguments a = *((arguments*) arg);
+
     if(!checkIfPlayerIsLoggedIn(a.socket,users))
     {
+         pthread_mutex_lock(&mutex);
         logIn(createUser(a.socket),users);
+        pthread_mutex_unlock(&mutex);
     }
-    char c;
+    pthread_mutex_lock(&mutex);
     int idx = getUserIndex(a.socket, users);
-    struct User this = users[idx];
     if(canIPlayWithSomebody(a.socket, users))
     {
         struct User opp =  findOpponent(a.socket, users);
+        printf("%d\n",opp.dsc);
         createGame(a.socket, opp.dsc,users, games);
+        pthread_mutex_unlock(&mutex);
         strcpy(buffer, "white");
         c='w';
         send(a.socket, buffer,  strlen( buffer ), 0);
@@ -195,7 +209,10 @@ void* client_loop(void *arg)
     }
     else
     {
+        pthread_mutex_unlock(&mutex);
+        struct User this = users[idx];
         printf("\njestem watkiem  o dsc rownym: %d oczekuje na gracza\n", a.socket);
+        //oczekuje na stworzenie gry ze mna
         while(!this.playing)
         {
             this = users[idx];
@@ -205,31 +222,40 @@ void* client_loop(void *arg)
         send(a.socket, buffer,  strlen( buffer ), 0);
     }
     bzero(&buffer, sizeof buffer);
+    int gameId = users[idx].gameId;
     while((strcmp(buffer,"end") != 0) && (strcmp(buffer,"user_disconnected")!= 0))
     {
-        int gameId = users[idx].gameId;
-        if(!games[gameId].inProgress)break;
         int opp;
+        if(!games[gameId].inProgress)break;
+        //czy  wykonywalem ostatni ruch
         if(games[gameId].lastPlayerDsc != users[idx].dsc)
         {
+            //ustalanie socketa przeciwnika
             if(games[gameId].dsc1 == users[idx].dsc) opp = games[gameId].dsc2;
             else opp = games[gameId].dsc1;
+            //czy wyslano juz komunikat z naszego socketa
             if(games[gameId].sent != users[idx].dsc )
             {
+                //czyszczenie bufora
                 bzero(&buffer, sizeof buffer);
-                while((rcvd = recv(a.socket, buffer,  MAX_MSG_LEN, 0) > 0 ))
+                //pobieranie komunikatu
+                while(recv(a.socket, buffer,  MAX_MSG_LEN, 0) > 0 )
                 {
                     printf("\njestem watkiem o kolorze: %c o dsc rownym: %d otrzymalem wiadomosc\n", c, a.socket);
+                    //sprawdzanie czy gra nie powinna sie skonczyc
                     if(strcmp(buffer,"end") == 0 ||  strcmp(buffer,"user_disconnected")== 0)
                     {
                         games[gameId].inProgress = 0;
                         printf("\njestem watkiem o kolorze: %c o dsc rownym: %d otrzymalem wiadomosc konca\n", c, a.socket);
                     }
+                    //wysylanie otrzymanej informacji do przeciwnika
                     send(opp, buffer, strlen(buffer), 0);
                     printf("\njestem watkiem o kolorze: %c o dsc rownym: %d wyslalem wiadomosc\n", c, a.socket);
 
+                    //ustalenie informacji o wyslanych komunikatach
                     games[gameId].sent = users[idx].dsc;
                     games[gameId].lastPlayerDsc = users[idx].dsc;
+                    //ponowne czyszczenie
                     bzero(&buffer, sizeof buffer);
                     if(!games[gameId].inProgress)break;
                 }
@@ -237,11 +263,14 @@ void* client_loop(void *arg)
         }
         else
         {
+            //jezeli wykonalem ostatni ruch to czekam
             while(games[gameId].lastPlayerDsc == users[idx].dsc);
         }
 
     }
+    //czyszczenie informacji oraz konie dzialania watka
     destroyUser(a.socket, users);
+    destroyGame(gameId, games);
     bzero(&buffer, sizeof buffer);
     close(a.socket);
 
@@ -258,7 +287,7 @@ int main(int argc,char **argv)
     struct sockaddr_in    server_addr, client_addr;
 
     int sck, rcv_sck, rcv_len;
-
+    //ustawienia
     bzero(&server_addr, sizeof server_addr);
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_family = AF_INET;
@@ -284,7 +313,7 @@ int main(int argc,char **argv)
         perror("Cannot listen");
         exit(EXIT_FAILURE);
     }
-
+    //oczekiwanie na polaczenia
     while(1)
     {
 
